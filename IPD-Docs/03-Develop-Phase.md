@@ -1,588 +1,122 @@
-# 03 — 开发阶段（Develop Phase）
+# 03 — 开发阶段（Develop Phase）深度文档
 
 ## 1. 阶段概述
 
 开发阶段的核心任务是：
-- 按照计划阶段的详细设计进行编码实现
-- 完成各模块的 RTL 代码编写
-- 进行单元测试与模块级验证
+- 按照计划阶段的详细设计进行 Chisel RTL 代码实现
+- 完成各模块的功能编写与单元测试
 - 持续集成与代码评审
+- 确保模块间接口对齐，满足性能与功耗目标
 
 **决策评审点**：开发决策评审（ADCP）
 
 ---
 
-## 2. 开发流程
+## 2. 开发流程与模型
 
-### 2.1 开发模型
+### 2.1 增量迭代开发模型
 
-香山项目采用 **增量迭代开发模型**：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    增量迭代开发流程                           │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐ │
-│  │ 迭代 1   │──▶│ 迭代 2   │──▶│ 迭代 3   │──▶│ 迭代 N   │ │
-│  │ 基础流水 │   │ 乱序执行 │   │ 缓存系统 │   │ 完整系统 │ │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────┘ │
-│       │              │              │              │       │
-│       ▼              ▼              ▼              ▼       │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐ │
-│  │ 单元测试 │   │ 单元测试 │   │ 单元测试 │   │ 系统测试 │ │
-│  │ 集成测试 │   │ 集成测试 │   │ 集成测试 │   │ 回归测试 │ │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────┘ │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 2.2 代码组织结构
+香山采用基于 Chisel 的敏捷开发模式，半年微架构迭代周期：
 
 ```
-src/main/scala/
-├── xiangshan/                    # 核心微架构包
-│   ├── package.scala             # 包定义、公共类型
-│   ├── Parameters.scala          # 微架构参数定义
-│   ├── XSTile.scala              # Tile 顶层封装
-│   ├── XSCore.scala              # 核心集成
-│   ├── L2Top.scala               # L2 顶层
-│   ├── frontend/                 # 前端模块
-│   │   ├── Frontend.scala        # 前端顶层
-│   │   ├── BPU.scala             # 分支预测单元
-│   │   ├── FTB.scala             # 取指目标缓冲
-│   │   ├── Tage.scala            # TAGE 预测器
-│   │   ├── ITTage.scala          # ITTAGE 预测器
-│   │   ├── RAS.scala             # 返回地址栈
-│   │   ├── FauFTB.scala          # 快速 FTB
-│   │   ├── IBuffer.scala         # 指令缓冲
-│   │   ├── PreDecode.scala       # 预译码
-│   │   ├── NewFtq.scala          # 取指传输队列
-│   │   └── icache/               # 指令缓存
-│   │       ├── ICache.scala      # ICache 顶层
-│   │       ├── ICacheMainPipe.scala
-│   │       └── ...
-│   ├── backend/                  # 后端模块
-│   │   ├── Backend.scala         # 后端顶层
-│   │   ├── BackendParams.scala   # 后端参数
-│   │   ├── Bundles.scala         # 接口 Bundle 定义
-│   │   ├── ctrlblock/            # 控制块
-│   │   │   ├── MemCtrl.scala     # 内存控制
-│   │   │   └── RedirectGenerator.scala
-│   │   ├── decode/               # 译码
-│   │   │   ├── DecodeUnit.scala
-│   │   │   ├── Instructions.scala
-│   │   │   ├── VecDecoder.scala
-│   │   │   └── isa/
-│   │   ├── dispatch/             # 分派
-│   │   ├── issue/                # 发射
-│   │   │   ├── IssueQueue.scala
-│   │   │   ├── Bypass.scala
-│   │   │   ├── Wakeup.scala
-│   │   │   └── Scheduler.scala
-│   │   ├── rename/               # 重命名
-│   │   │   ├── FreeList.scala
-│   │   │   ├── RenameTable.scala
-│   │   │   └── BusyTable.scala
-│   │   ├── rob/                  # 重排序缓冲
-│   │   │   ├── Rob.scala
-│   │   │   └── Rab.scala
-│   │   ├── regfile/              # 寄存器堆
-│   │   │   ├── RegFile.scala
-│   │   │   └── ...
-│   │   ├── exu/                  # 执行单元
-│   │   ├── fu/                   # 功能单元
-│   │   │   ├── ALU.scala
-│   │   │   ├── Branch.scala
-│   │   │   ├── CSR.scala
-│   │   │   ├── Fence.scala
-│   │   │   ├── Jump.scala
-│   │   │   ├── Multiplier.scala
-│   │   │   ├── divider/
-│   │   │   ├── fpu/
-│   │   │   ├── vector/
-│   │   │   ├── PMA.scala
-│   │   │   └── PMP.scala
-│   │   ├── datapath/             # 数据通路
-│   │   │   ├── Bypass.scala
-│   │   │   └── ...
-│   │   └── trace/                # 追踪
-│   ├── cache/                    # 缓存系统
-│   │   ├── L1Cache.scala
-│   │   ├── dcache/               # 数据缓存
-│   │   │   ├── DCache.scala
-│   │   │   ├── DCacheMainPipe.scala
-│   │   │   └── ...
-│   │   ├── mmu/                  # 内存管理单元
-│   │   │   ├── TLB.scala
-│   │   │   ├── L2TLB.scala
-│   │   │   ├── PTW.scala
-│   │   │   └── ...
-│   │   └── wpu/                  #  way prediction
-│   ├── mem/                      # 内存系统
-│   │   ├── MemBlock.scala        # 内存块顶层
-│   │   ├── Bundles.scala         # 接口定义
-│   │   ├── lsqueue/              # Load/Store 队列
-│   │   │   ├── LoadQueue.scala
-│   │   │   ├── StoreQueue.scala
-│   │   │   └── ...
-│   │   ├── pipeline/             # 流水线
-│   │   │   ├── LoadPipeline.scala
-│   │   │   ├── StorePipeline.scala
-│   │   │   └── ...
-│   │   ├── sbuffer/              # Store Buffer
-│   │   ├── prefetch/             # 预取器
-│   │   │   ├── SMSPrefetcher.scala
-│   │   │   ├── StridePrefetcher.scala
-│   │   │   └── ...
-│   │   ├── mdp/                  # 内存依赖预测
-│   │   │   ├── StoreSet.scala
-│   │   │   ├── WaitTable.scala
-│   │   │   └── ...
-│   │   └── vector/               # 向量内存
-│   └── transforms/               # FIRRTL 变换
-├── top/                          # 顶层
-│   ├── Top.scala                 # XSTop 顶层
-│   ├── Configs.scala             # 配置定义
-│   ├── Generator.scala           # 代码生成器
-│   ├── XiangShanStage.scala      # 自定义阶段
-│   ├── XSNoCTop.scala            # NoC 顶层
-│   ├── ExternalLLC.scala         # 外部 LLC
-│   ├── ArgParser.scala           # 命令行解析
-│   ├── YamlParser.scala          # YAML 配置解析
-│   └── BusPerfMonitor.scala      # 总线性能监控
-├── system/                       # SoC 系统
-│   └── SoC.scala                 # SoC 参数与集成
-├── device/                       # 设备
-│   ├── AXI4/
-│   ├── standalone/
-│   └── TLPMA/
-└── utils/                        # 工具库
-    ├── ArbiterHelper.scala
-    ├── AXI4Lite.scala
-    ├── DebugMem.scala
-    ├── Trigger.scala
-    ├── OverrideableQueue.scala
-    ├── PipeWithFlush.scala
-    ├── LowPowerState.scala
-    └── ...
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    增量迭代开发流程 (基于 Chisel 6.7.0)                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  迭代 1          迭代 2          迭代 3          迭代 N                 │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐              │
+│  │ 基础流水 │───▶│ 乱序执行 │───▶│ 缓存系统 │───▶│ 完整系统 │              │
+│  │ 线 (In- │    │ (OoO)   │    │ (L1/L2) │    │ (SMP)   │              │
+│  │  Order) │    │         │    │         │    │         │              │
+│  └─────────┘    └─────────┘    └─────────┘    └─────────┘              │
+│       │               │               │               │                │
+│       ▼               ▼               ▼               ▼                │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐              │
+│  │ 单元测试 │    │ 单元测试 │    │ 单元测试 │    │ 系统测试 │              │
+│  │ + 集成   │    │ + 集成   │    │ + 集成   │    │ + 回归   │              │
+│  └─────────┘    └─────────┘    └─────────┘    └─────────┘              │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+### 2.2 Chisel 开发最佳实践
 
-## 3. 关键模块详细设计
+| 实践 | 说明 | 代码体现 |
+|------|------|---------|
+| 函数式编程风格 | 使用 `val` 而非 `var`，避免可变状态 | `xiangshan/Parameters.scala` |
+| 模块封装 | 使用 `Module` / `LazyModule` 封装功能 | `Frontend.scala`, `Backend.scala` |
+| 接口 Bundle | 使用 `Bundle` 组织 IO 接口，保持清晰 | `Frontend.scala` io 定义 |
+| 参数化设计 | 使用隐式 `Parameters` 传递配置 | `implicit p: Parameters` |
+| 未连接信号 | 使用 `DontCare` 明确未连接，避免误警告 | 各模块中 |
+| 运行时断言 | 使用 `assert` 捕获设计错误 | 各模块中 |
+| 数据视图 | 使用 `dataview` 在不同 Bundle 间转换 | `chisel3.experimental.dataview._` |
 
-### 3.1 前端模块
+### 2.3 代码编写规范
 
-#### 3.1.1 BPU（分支预测单元）
+#### 2.3.1 模块定义模板
 
 ```scala
-// BPU 顶层结构
-class BPU(implicit p: Parameters) extends BasePredictor {
-  // 预测器实例化
-  val ftb = Module(new FTB)          // 取指目标缓冲
-  val uftb = Module(new FauFTB)      // 快速 FTB
-  val tage = Module(new Tage_SC)     // TAGE-SC
-  val ittage = Module(new ITTage)    // ITTAGE
-  val ras = Module(new RAS)          // 返回地址栈
-  
-  // 预测流水线
-  // Stage 1: uftb 快速预测
-  // Stage 2: tage + ftb
-  // Stage 3: ittage + ras (backing predictor)
-}
-```
-
-**关键设计要点：**
-
-| 特性 | 实现 |
-|------|------|
-| 预测宽度 | 8 指令/周期 |
-| FTB 大小 | 2048 entries, 4-way |
-| TAGE 表 | 4 tables, 4096 entries each |
-| 历史长度 | 8, 13, 32, 119 |
-| ITTAGE 表 | 5 tables |
-| RAS 大小 | 16 entries |
-| 恢复机制 | 检查点 + 回滚 |
-
-#### 3.1.2 ICache（指令缓存）
-
-```scala
-// ICache 参数
-case class ICacheParameters(
-  nSets: Int = 128,              // 64KB / 4-way / 128B line
-  nWays: Int = 4,
-  tagECC: Option[String] = Some("parity"),
-  dataECC: Option[String] = Some("parity"),
-  replacer: Option[String] = Some("setplru")
-)
-```
-
-**关键设计要点：**
-
-| 特性 | 实现 |
-|------|------|
-| 容量 | 64KB |
-| 相联度 | 4-way |
-| 行大小 | 128 bits (16 bytes) |
-| 访问延迟 | 2 cycles |
-| 替换策略 | Set-plru |
-| ECC | Parity (tag + data) |
-| 端口数 | 2 read + 1 write |
-
-### 3.2 后端模块
-
-#### 3.2.1 重命名单元
-
-```scala
-// 重命名接口
-class RenameInterface(implicit p: Parameters) extends Bundle {
-  val ren_src = Vec(RenameWidth, Vec(2, Valid(UInt(PhyRegIdxWidth.W))))
-  val ren_dst = Vec(RenameWidth, Valid(UInt(PhyRegIdxWidth.W)))
-  val ren_src_snapshot = Vec(RenameWidth, Valid(UInt(PhyRegIdxWidth.W)))
-}
-```
-
-**关键设计要点：**
-
-| 特性 | 实现 |
-|------|------|
-| 重命名宽度 | 6 指令/周期 |
-| 物理寄存器 | 192 (Int) |
-| 空闲列表 | 基于链表的 FreeList |
-| 忙表 | 基于 CAM 的 BusyTable |
-| 快照 | 4 个检查点用于恢复 |
-
-#### 3.2.2 发射队列
-
-```scala
-// 调度器类型
-sealed trait SchedulerType
-case class IntScheduler() extends SchedulerType    // 整数调度器
-case class FpScheduler() extends SchedulerType     // 浮点调度器
-case class VfScheduler() extends SchedulerType     // 向量调度器
-case class MemScheduler() extends SchedulerType    // 内存调度器
-```
-
-**调度器配置：**
-
-| 调度器 | 发射块数 | 每块条目数 | 总条目数 |
-|--------|---------|-----------|---------|
-| IntScheduler | 4 | 24 | 96 |
-| FpScheduler | 3 | 18 | 54 |
-| VfScheduler | 3 | 16 | 48 |
-| MemScheduler | 6 | 16 | 96 |
-
-#### 3.2.3 ROB（重排序缓冲）
-
-```scala
-// ROB 参数
-case class RobSize = 160
-case class RabSize = 256
-case class RobCommitWidth = 8
-```
-
-**关键设计要点：**
-
-| 特性 | 实现 |
-|------|------|
-| 大小 | 160 entries |
-| 提交宽度 | 8 指令/周期 |
-| RAB | 256 entries |
-| 异常处理 | 精确异常 |
-| 分支恢复 | 支持多次重定向 |
-
-### 3.3 执行单元
-
-#### 3.3.1 ALU
-
-```scala
-// ALU 配置
-case class AluCfg extends ExeUnitParams {
-  val name = "ALU"
-  val fuConfigs = Seq(AluCfg, MulCfg, BkuCfg)
-  val wbPorts = Seq(IntWB)
-}
-```
-
-**ALU 流水线：**
-
-| 阶段 | 功能 |
-|------|------|
-| EX1 | 运算执行 |
-| WB | 写回寄存器堆 |
-
-#### 3.3.2 FPU（浮点单元）
-
-```scala
-// FPU 配置
-case class FuConfig {
-  val falu = ExeUnitParams("FALU", Seq(FaluCfg, FcvtCfg, F2vCfg, FmacCfg))
-  val fdiv = ExeUnitParams("FDIV", Seq(FdivCfg))
-}
-```
-
-**FPU 流水线：**
-
-| 单元 | 延迟 | 功能 |
-|------|------|------|
-| FALU | 3 cycles | 浮点加/减/转换 |
-| FMAC | 4 cycles | 浮点乘加 |
-| FDIV | 8 cycles | 浮点除法 |
-
-#### 3.3.3 向量单元
-
-```scala
-// 向量配置
-case class VecConfig {
-  val vlen = 128
-  val elen = 64
-  val vlenb = vlen / 8  // 16 bytes
-}
-```
-
-**向量流水线：**
-
-| 单元 | 功能 |
-|------|------|
-| VIALU | 向量整数运算 |
-| VFMA | 向量浮点乘加 |
-| VDIV | 向量除法 |
-| VLSU | 向量 Load/Store |
-
-### 3.4 存储系统
-
-#### 3.4.1 DCache（数据缓存）
-
-```scala
-// DCache 参数
-case class DCacheParameters(
-  nSets: Int = 1024,           // 64KB / 4-way / 128B line
-  nWays: Int = 4,
-  tagECC: Option[String] = Some("secded"),
-  dataECC: Option[String] = Some("secded"),
-  replacer: Option[String] = Some("setplru"),
-  nMissEntries: Int = 16,
-  nProbeEntries: Int = 8,
-  nReleaseEntries: Int = 18,
-  nMaxPrefetchEntry: Int = 6
-)
-```
-
-**关键设计要点：**
-
-| 特性 | 实现 |
-|------|------|
-| 容量 | 64KB |
-| 相联度 | 4-way |
-| 行大小 | 128 bits |
-| 访问延迟 | 2 cycles |
-| 替换策略 | Set-plru |
-| ECC | SECDED (tag + data) |
-| MSHR | 16 entries |
-| 预取 | 最多 6 个 outstanding |
-
-#### 3.4.2 LSQ（Load/Store 队列）
-
-```scala
-// Load/Store 队列参数
-case class LoadQueueSize = 72
-case class StoreQueueSize = 56
-case class StoreBufferSize = 16
-```
-
-**Load 队列结构：**
-
-| 队列 | 大小 | 功能 |
-|------|------|------|
-| VirtualLoadQueue | 72 | 跟踪虚拟地址 |
-| LoadQueueRAR | 72 | Read-After-Read 依赖 |
-| LoadQueueRAW | 32 | Read-After-Write 依赖 |
-| LoadQueueReplay | 72 | 重放队列 |
-
-**Store 队列结构：**
-
-| 队列 | 大小 | 功能 |
-|------|------|------|
-| StoreQueue | 56 | 跟踪 Store 指令 |
-| SBuffer | 16 | Store Buffer |
-
-#### 3.4.3 TLB（页表缓存）
-
-```scala
-// TLB 参数
-case class TLBParameters(
-  name: String,
-  NWays: Int = 48,
-  partialStaticPMP: Boolean = true,
-  outsideRecvFlush: Boolean = true,
-  lgMaxSize: Int = 4
-)
-```
-
-**TLB 层次：**
-
-| TLB | 大小 | 功能 |
-|-----|------|------|
-| ITLB | 48 entries | 指令 TLB |
-| LDTLB | 48 entries | Load TLB |
-| STTLB | 48 entries | Store TLB |
-| HYTLB | 48 entries | 混合 TLB |
-| PFTLB | 48 entries | 预取 TLB |
-| L2TLB | 48 entries | 二级 TLB |
-
-### 3.5 预取器
-
-#### 3.5.1 SMS 预取器
-
-```scala
-// SMS 预取参数
-case class SMSParams extends PrefetcherParams {
-  val useHistogram = true
-  val useStride = true
-  val useStream = true
-}
-```
-
-**SMS 预取器特性：**
-
-| 特性 | 实现 |
-|------|------|
-| 检测模式 | Spatial Memory Streaming |
-| 预取距离 | 动态调整 |
-| 预取度 | 1-4 |
-| 训练 | 基于 L2 miss |
-
-#### 3.5.2 BOP 预取器
-
-```scala
-// BOP 预取参数
-case class BOPParameters extends PrefetcherParams {
-  val useBestOffset = true
-  val useRelearn = true
-}
-```
-
-**BOP 预取器特性：**
-
-| 特性 | 实现 |
-|------|------|
-| 检测模式 | Best Offset Prefetching |
-| 训练 | 基于历史 miss 模式 |
-| 预取 | 基于最佳偏移量 |
-
----
-
-## 4. 接口定义
-
-### 4.1 标准接口
-
-```scala
-// 指令接口
-class DecodedInst extends Bundle {
-  val instr = UInt(32.W)
-  val pc = UInt(VAddrBits.W)
-  val foldpc = UInt(MemPredPCWidth.W)
-  val exceptionVec = UInt(13.W)
-  val isVsetvl = Bool()
-  val isVsetvli = Bool()
-  val isVsetivli = Bool()
-  val isVec = Bool()
-  val is128Bit = Bool()
-  val scaled1 = Bool()
-  val scaled2 = Bool()
-  val scaled3 = Bool()
-  val isFirst = Bool()
-  val isSecond = Bool()
-  val isThird = Bool()
-  val isFourth = Bool()
-  val isFifth = Bool()
-  val isSixth = Bool()
-  val isSeventh = Bool()
-  val isEighth = Bool()
-  val isLast = Bool()
-  val debug_isCnt = Bool()
+// LazyModule 模式 (源自 Frontend.scala)
+class Frontend()(implicit p: Parameters) extends LazyModule with HasXSParameter {
+  override def shouldBeInlined: Boolean = false
+  val inner       = LazyModule(new FrontendInlined)
+  lazy val module = new FrontendImp(this)
 }
 
-// 重命名接口
-class RenamePair extends Bundle {
-  val old_pdest = UInt(PhyRegIdxWidth.W)
-  val new_pdest = UInt(PhyRegIdxWidth.W)
+class FrontendImp(wrapper: Frontend)(implicit p: Parameters) extends LazyModuleImp(wrapper) {
+  val io      = IO(wrapper.inner.module.io.cloneType)
+  val io_perf = IO(wrapper.inner.module.io_perf.cloneType)
+  io <> wrapper.inner.module.io
+  io_perf <> wrapper.inner.module.io_perf
+  // DFT 支持
+  if (p(DebugOptionsKey).ResetGen) {
+    ResetGen(ResetGenNode(Seq(ModuleNode(wrapper.inner.module))), reset, sim = false, io.dft_reset)
+  }
 }
 
-// 发射接口
-class IssueQueueEntry extends Bundle {
-  val uop = new MicroOp
-  val bankMask = UInt(4.W)
-  val selectSig = UInt(4.W)
-}
-
-// 写回接口
-class WbBundle extends Bundle {
-  val uop = new MicroOp
-  val data = UInt(DataBits.W)
-  val valid = Bool()
-}
-```
-
-### 4.2 关键路径时序
-
-| 路径 | 延迟 | 说明 |
-|------|------|------|
-| 取指 → ICache | 2 cycles | 地址生成 + 缓存访问 |
-| ICache → IBuffer | 1 cycle | 指令缓冲 |
-| IBuffer → Decode | 1 cycle | 译码 |
-| Decode → Rename | 1 cycle | 重命名 |
-| Rename → Issue | 1 cycle | 发射队列 |
-| Issue → EXU | 1 cycles | 执行单元 |
-| EXU → WB | 1 cycle | 写回 |
-
----
-
-## 5. 编码规范
-
-### 5.1 命名规范
-
-| 类型 | 规范 | 示例 |
-|------|------|------|
-| 模块名 | 大驼峰 | `ICache`, `BPU`, `RenameTable` |
-| 信号名 | 小驼峰 | `io_req_valid`, `io_resp_bits_data` |
-| 参数名 | 小驼峰 | `nSets`, `nWays`, `robSize` |
-| 常量 | 大写下划线 | `FETCH_WIDTH`, `DECODE_WIDTH` |
-| 方法名 | 小驼�峰 | `doRename`, `doIssue` |
-
-### 5.2 代码风格
-
-```scala
-// 模块定义模板
-class MyModule(implicit p: Parameters) extends Module {
-  val io = IO(new Bundle {
-    // 输入
-    val in_valid = Input(Bool())
-    val in_bits = Input(new MyBundle)
-    
-    // 输出
-    val out_valid = Output(Bool())
-    val out_bits = Output(new MyBundle)
-  })
-  
-  // 内部逻辑
+// 内联模块 (减少综合层级)
+class FrontendInlined()(implicit p: Parameters) extends LazyModule with HasXSParameter {
+  override def shouldBeInlined: Boolean = true
   // ...
 }
 
-// Bundle 定义模板
+// 普通 Chisel Module
+class MyModule(implicit p: Parameters) extends Module {
+  val io = IO(new Bundle {
+    val in_valid = Input(Bool())
+    val in_bits  = Input(new MyBundle)
+    val out_valid = Output(Bool())
+    val out_bits  = Output(new MyBundle)
+  })
+  // 内部逻辑
+  // ...
+}
+```
+
+#### 2.3.2 Bundle 定义模板
+
+```scala
 class MyBundle extends Bundle {
   val field1 = UInt(32.W)
   val field2 = Bool()
   val field3 = UInt(64.W)
+  val vec    = Vec(4, UInt(8.W))
+}
+
+// 带有 cloneType 的接口
+class MyInterface extends Bundle {
+  val req = Flipped(Decoupled(new MyBundle))
+  val resp = Decoupled(new MyBundle)
 }
 ```
 
-### 5.3 注释规范
+#### 2.3.3 注释规范
 
 ```scala
 /**
  * MyModule 模块说明
+ * 
+ * 实现了 XXX 功能，基于 XXX 论文/专利。
  * 
  * @param param1 参数1说明
  * @param param2 参数2说明
@@ -601,42 +135,522 @@ class MyModule(param1: Int, param2: Int)(implicit p: Parameters) extends Module 
 
 ---
 
-## 6. 持续集成
+## 3. 关键模块详细设计
 
-### 6.1 CI 流程
+### 3.1 前端模块详细设计
 
-```yaml
-# CI 主要步骤
-stages:
-  - lint          # 代码格式检查
-  - compile       # 编译检查
-  - verilog       # Verilog 生成检查
-  - emu           # EMU 测试
-  - simv          # VCS 测试
-  - coverage      # 覆盖率检查
+#### 3.1.1 BPU（分支预测单元）
+
+BPU 采用 3 级流水线架构 (S1/S2/S3)，多预测器协同：
+
+```scala
+// BPU 控制寄存器 (源自 BPU.scala)
+class BPUCtrl(implicit p: Parameters) extends XSBundle {
+  val ubtb_enable = Bool()
+  val btb_enable  = Bool()
+  val bim_enable  = Bool()
+  val tage_enable = Bool()
+  val sc_enable   = Bool()
+  val ras_enable  = Bool()
+  val loop_enable = Bool()
+}
+
+// BPU 常量 (源自 BPU.scala HasBPUConst)
+trait HasBPUConst extends HasXSParameter {
+  val MaxMetaBaseLength = if (!env.FPGAPlatform) 512 else 256
+  val MaxMetaLength     = if (HasHExtension) MaxMetaBaseLength + 4 else MaxMetaBaseLength
+  val MaxBasicBlockSize = 32
+  val LHistoryLength    = 32
+  val numDup            = 4
+  val pcSegments        = Seq(VAddrBits - 24, 12, 12)
+  def BP_STAGES = (0 until 3).map(_.U(2.W))  // S1, S2, S3
+  val numBpStages = BP_STAGES.length
+}
 ```
 
-### 6.2 提交规范
+**预测器协同链路 (源自 Parameters.scala branchPredictor)：**
 
 ```
-feat: 新功能
-fix: 修复 bug
-docs: 文档更新
-style: 代码格式调整
-refactor: 重构
-test: 测试相关
-chore: 构建/工具相关
+uFTB → FTB → TAGE-SC → ITTAGE → RAS → 最终预测结果
+  │       │       │       │       │
+  ▼       ▼       ▼       ▼       ▼
+快速预测 目标缓冲 标签预测 间接跳转 返回地址
 ```
 
-### 6.3 分支策略
+| 预测器 | 规格 | 功能 |
+|--------|------|------|
+| uFTB (FauFTB) | 256 entries | 快速分支目标预测 |
+| FTB | 2048 entries, 4-way | 取指目标缓冲 |
+| TAGE-SC | 4 tables, 4096 entries each | 标签几何历史长度预测 |
+| ITTAGE | 5 tables | 间接跳转目标预测 |
+| RAS | 16 entries, Spec 32 | 返回地址栈 |
+| UBTB | 256 entries | 无条件分支目标缓冲 |
+
+**分支预测历史长度：**
+- TageTableInfos: `(4096, 8, 8)`, `(4096, 13, 8)`, `(4096, 32, 8)`, `(4096, 119, 8)`
+- ITTageTableInfos: `(256, 4, 9)`, `(256, 8, 9)`, `(512, 13, 9)`, `(512, 16, 9)`, `(512, 32, 9)`
+- SCNRows: 512, SCNTables: 4, SCCtrBits: 6
+- SCHistLens: `Seq(0, 4, 10, 16)`
+
+#### 3.1.2 ICache（指令缓存）
+
+```scala
+// ICache 参数 (源自 Parameters.scala)
+icacheParameters: ICacheParameters = ICacheParameters(
+  tagECC = Some("parity"),
+  dataECC = Some("parity"),
+  replacer = Some("setplru")
+)
+
+// MinimalConfig 中的 ICache 配置
+icacheParameters = ICacheParameters(
+  nSets = 64,           // 16KB ICache
+  tagECC = Some("parity"),
+  dataECC = Some("parity"),
+  replacer = Some("setplru")
+)
+```
+
+| 特性 | 实现 |
+|------|------|
+| 容量 | 64KB (默认), 16KB (Minimal) |
+| 相联度 | 4-way |
+| 行大小 | 128 bits (16 bytes) |
+| 访问延迟 | 2 cycles |
+| 替换策略 | Set-plru |
+| ECC | Parity (tag + data) |
+| 端口数 | 2 read + 1 write |
+| MMU | ITLB (48 ways, fetchi=true) |
+
+#### 3.1.3 前端接口信号
+
+| 信号 | 方向 | 宽度 | 说明 |
+|------|------|------|------|
+| hartId | Input | hartIdLen | 核心 ID |
+| reset_vector | Input | PAddrBits | 复位向量 |
+| fencei | Input | 1 | 指令缓存刷新 |
+| ptw | Inout | TlbPtwIO | 页表遍历接口 |
+| backend | Out | FrontendToCtrlIO | 到后端接口 |
+| sfence | Input | SfenceBundle | 地址空间刷新 |
+| tlbCsr | Input | TlbCsrBundle | TLB CSR |
+| error | Output | L1BusErrorUnitInfo | 错误信息 |
+
+---
+
+### 3.2 后端模块详细设计
+
+#### 3.2.1 重命名单元
+
+重命名采用基于链表的 FreeList 和 CAM 式 BusyTable：
 
 ```
-main/master       # 主分支，稳定版本
-├── develop       # 开发分支
-├── feature/*     # 功能分支
-├── bugfix/*      # 修复分支
-├── release/*     # 发布分支
-└── hotfix/*      # 热修复分支
+重命名流程：
+1. 分配物理寄存器 (FreeList.pop)
+2. 更新重命名表 (RenameTable.write)
+3. 设置忙表 (BusyTable.set)
+4. 创建快照 (Snapshot, 用于异常恢复)
+5. 输出重命名对 (old_pdest, new_pdest)
+```
+
+| 特性 | 实现 |
+|------|------|
+| 重命名宽度 | 6 指令/周期 |
+| 物理寄存器 | 224 (Int), 192 (FP), 128 (VF) |
+| 快照数量 | 4 个检查点 (RenameSnapshotNum) |
+| 异常恢复 | 快照回滚 + FreeList 恢复 |
+
+#### 3.2.2 发射队列与调度器
+
+采用 Tomasulo 算法，多调度器并行：
+
+```
+调度器类型：
+├── IntScheduler  (整数调度器)
+│   ├── ALU0/ALU1/ALU2/ALU3 (24 entries × 4 = 96)
+│   └── BJU0/BJU1/BJU2/BJU3
+├── FpScheduler   (浮点调度器)
+│   ├── FEX0/FEX2/FEX4 (18 entries × 3 = 54)
+│   └── FEX1/FEX3
+├── VfScheduler   (向量调度器)
+│   ├── VFEX0/VFEX2/VFEX4 (16 entries × 3 = 48)
+│   └── VFEX1/VFEX3
+└── MemScheduler  (内存调度器)
+    ├── LDU0/LDU1/LDU2 (16 entries × 3 = 48)
+    ├── STA0/STA1 (16 entries × 2 = 32)
+    ├── STD0/STD1 (16 entries × 2 = 32)
+    └── VLSU0/VLSU1 (14 entries × 2 = 28)
+```
+
+**唤醒与选择逻辑：**
+- WakeUpConfig 定义执行单元间的唤醒路径
+- 例如：ALU0-3, LDU0-2 → ALU0, BJU0, ALU1, BJU1, ...
+
+#### 3.2.3 ROB（重排序缓冲）
+
+```scala
+// ROB 参数
+RobSize = 160
+RabSize = 256
+RobCommitWidth = 8
+RabCommitWidth = 6
+```
+
+| 特性 | 实现 |
+|------|------|
+| 大小 | 160 entries |
+| 提交宽度 | 8 指令/周期 |
+| RAB | 256 entries (重命名备份) |
+| 异常处理 | 精确异常，支持快照恢复 |
+| 分支恢复 | 支持多次重定向 |
+
+---
+
+### 3.3 执行单元详细设计
+
+#### 3.3.1 ALU（算术逻辑单元）
+
+```scala
+// ALU 配置 (源自 Parameters.scala intSchdParams)
+ExeUnitParams("ALU0", Seq(AluCfg, MulCfg, BkuCfg), 
+  Seq(IntWB(port = 0, 0)), 
+  Seq(Seq(IntRD(0, 0)), Seq(IntRD(1, 0))), 
+  true, 2)
+```
+
+| 执行单元 | 功能 | 流水线 | 延迟 |
+|---------|------|--------|------|
+| ALU0-3 | 整数加/减/移位/位操作 | 1-2 级 | 1-2 cycles |
+| BJU0-3 | 分支/跳转/返回 | 1-3 级 | 1-3 cycles |
+| FEX0-4 | 浮点加/减/乘/转换 | 3-8 级 | 3-8 cycles |
+| VFEX0-4 | 向量运算 | 3-8 级 | 3-8 cycles |
+
+#### 3.3.2 FPU（浮点单元）
+
+基于 fudian 子模块，支持 IEEE 754：
+
+```scala
+// FPU 配置
+ExeUnitParams("FEX0", Seq(FaluCfg, FcvtCfg, F2vCfg, FmacCfg), ...)
+ExeUnitParams("FEX1", Seq(FdivCfg), ...)
+```
+
+| 单元 | 功能 | 延迟 | 说明 |
+|------|------|------|------|
+| FALU | 浮点加/减/转换 | 3 cycles | 支持 NaN Boxing |
+| FMAC | 浮点乘加 | 4 cycles | 乘加融合 |
+| FDIV | 浮点除法 | 8 cycles | 迭代除法 |
+| FCVT | 浮点转换 | 2 cycles | int↔fp 转换 |
+
+**NaN Boxing (源自 LoadQueue.scala rdataHelper)：**
+> RISC-V Spec: 任何写入较窄结果到 f 寄存器的操作，必须将 FLEN−n 最高位置为 1，以产生合法的 NaN-boxed 值。
+
+#### 3.3.3 向量单元 (RVV 1.0)
+
+```scala
+// 向量配置
+VLEN = 128
+ELEN = 64
+minVecElen = 8
+maxElemPerVreg = VLEN / minVecElen = 16
+```
+
+| 单元 | 功能 | 延迟 |
+|------|------|------|
+| VIALU | 向量整数运算 (VADD, VSUB) | 3-5 cycles |
+| VFMA | 向量浮点乘加 | 4-6 cycles |
+| VDIV | 向量除法 | 8-12 cycles |
+| VLSU | 向量 Load/Store | 可变 |
+| VPerm | 向量排列 (VMerge, VSlide) | 2-4 cycles |
+
+**向量寄存器文件：**
+- vfPreg: 128 entries
+- v0Preg: 22 entries (V0)
+- vlPreg: 32 entries (VL)
+
+---
+
+### 3.4 存储系统详细设计
+
+#### 3.4.1 DCache（数据缓存）
+
+```scala
+// DCache 参数 (源自 Parameters.scala)
+dcacheParametersOpt = Some(DCacheParameters(
+  tagECC = Some("secded"),
+  dataECC = Some("secded"),
+  replacer = Some("setplru"),
+  nMissEntries = 16,
+  nProbeEntries = 8,
+  nReleaseEntries = 18,
+  nMaxPrefetchEntry = 6,
+  enableTagEcc = true,
+  enableDataEcc = true
+))
+```
+
+| 特性 | 实现 |
+|------|------|
+| 容量 | 64KB |
+| 相联度 | 4-way |
+| 行大小 | 128 bits |
+| 访问延迟 | 2 cycles |
+| 替换策略 | Set-plru |
+| ECC | SECDED (tag + data) |
+| MSHR | 16 entries |
+| 预取 | 最多 6 个 outstanding |
+
+#### 3.4.2 LSQ（Load/Store 队列）
+
+```scala
+// Load/Store 队列参数
+VirtualLoadQueueSize = 72
+LoadQueueRARSize = 72
+LoadQueueRAWSize = 32
+StoreQueueSize = 56
+StoreBufferSize = 16
+```
+
+**Load 队列子队列：**
+
+| 队列 | 大小 | 功能 |
+|------|------|------|
+| VirtualLoadQueue | 72 | 跟踪虚拟地址 |
+| LoadQueueRAR | 72 | Read-After-Read 依赖检测 |
+| LoadQueueRAW | 32 | Read-After-Write 依赖检测 |
+| LoadQueueReplay | 72 | 重放队列 (缓存未命中) |
+
+**Store 队列结构：**
+
+| 队列 | 大小 | 功能 |
+|------|------|------|
+| StoreQueue | 56 | 跟踪 Store 指令 |
+| SBuffer | 16 | Store Buffer (写合并) |
+
+**Load 数据格式处理 (源自 LoadQueue.scala rdataHelper)：**
+
+| 指令 | 处理方式 |
+|------|---------|
+| lb | SignExt(rdata[7:0], XLEN) |
+| lh | SignExt(rdata[15:0], XLEN) |
+| lw | SignExt(rdata[31:0], XLEN) |
+| ld | rdata[63:0] |
+| lbu | ZeroExt(rdata[7:0], XLEN) |
+| lhu | ZeroExt(rdata[15:0], XLEN) |
+| lwu | ZeroExt(rdata[31:0], XLEN) |
+| hlvb/hlvh/hlvw/hlvd | 超级访问 (H-extension) |
+| fpWen | FPU.box(rdata, FPU.H/S/D) (NaN Boxing) |
+
+#### 3.4.3 TLB（页表缓存）
+
+```scala
+// TLB 参数
+itlbParameters: TLBParameters = TLBParameters(
+  name = "itlb", fetchi = true, useDmode = false, NWays = 48
+)
+ldtlbParameters: TLBParameters = TLBParameters(
+  name = "ldtlb", NWays = 48, partialStaticPMP = true, outsideRecvFlush = true
+)
+```
+
+| TLB | 大小 | 功能 |
+|-----|------|------|
+| ITLB | 48 entries | 指令 TLB (fetchi) |
+| LDTLB | 48 entries | Load TLB |
+| STTLB | 48 entries | Store TLB |
+| HYTLB | 48 entries | 混合 TLB |
+| PFTLB | 48 entries | 预取 TLB |
+| L2TLB | 48 entries | 二级 TLB |
+| BTLB | 48 entries | 分支目标 TLB |
+
+**页表遍历 (PTW)：**
+- Sv39 / Sv48 两级/三级页表
+- 硬件页表遍历，支持 PMP 检查
+- 支持 H-extension 嵌套分页
+
+---
+
+### 3.5 预取器
+
+#### 3.5.1 SMS（Spatial Memory Streaming）预取器
+
+```scala
+case class SMSParams extends PrefetcherParams {
+  val useHistogram = true
+  val useStride = true
+  val useStream = true
+}
+```
+
+| 特性 | 实现 |
+|------|------|
+| 检测模式 | 空间内存流 (Spatial Memory Streaming) |
+| 预取距离 | 动态调整 |
+| 预取度 | 1-4 |
+| 训练 | 基于 L2 miss 模式 |
+
+#### 3.5.2 BOP（Best Offset）预取器
+
+```scala
+case class BOPParameters extends PrefetcherParams {
+  val useBestOffset = true
+  val useRelearn = true
+}
+```
+
+| 特性 | 实现 |
+|------|------|
+| 检测模式 | 最佳偏移预取 |
+| 训练 | 基于历史 miss 模式 |
+| 预取 | 基于最佳偏移量 |
+
+#### 3.5.3 TP（Temporal Prefetch）预取器
+
+```scala
+case class TPParameters() extends PrefetchReceiverParams
+```
+
+| 特性 | 实现 |
+|------|------|
+| 检测模式 | 时间局部性预取 |
+| 适用 | L2 缓存 |
+
+---
+
+## 4. 接口定义与集成
+
+### 4.1 模块间接口
+
+| 接口 | 来源 | 目标 | Bundle 类型 |
+|------|------|------|-------------|
+| 取指请求 | Frontend | ICache | ICacheReq |
+| 取指响应 | ICache | Frontend | ICacheResp |
+| 分支预测 | BPU | Frontend | BPUResp |
+| 重定向 | Backend | Frontend | Redirect |
+| 译码输出 | Decode | Rename | DecodedInst |
+| 重命名输出 | Rename | IssueQueue | RenameOutput |
+| 发射输出 | IssueQueue | EXU | ExuInput |
+| 执行结果 | EXU | WB | ExuOutput |
+| 提交请求 | ROB | 寄存器堆 | CommitInfo |
+| Load 请求 | LSQ | DCache | DCacheReq |
+| Store 请求 | LSQ | DCache | DCacheReq |
+| 页表遍历 | TLB | PTW | PTWReq |
+| 预取请求 | Prefetcher | L2 | PrefetchReq |
+
+### 4.2 关键路径时序
+
+| 路径 | 延迟 | 说明 |
+|------|------|------|
+| 取指 → ICache | 2 cycles | 地址生成 + 缓存访问 |
+| ICache → IBuffer | 1 cycle | 指令缓冲 |
+| IBuffer → Decode | 1 cycle | 译码 |
+| Decode → Rename | 1 cycle | 重命名 |
+| Rename → Issue | 1 cycle | 发射队列 |
+| Issue → EXU | 1 cycle | 执行单元 |
+| EXU → WB | 1 cycle | 写回 |
+| WB → Commit | 1 cycle | 提交 |
+
+---
+
+## 5. 构建系统与工具链
+
+### 5.1 Mill 构建系统 (build.sc)
+
+```scala
+// 版本锁定
+val defaultScalaVersion = "2.13.15"
+val defaultVersions = Map(
+  "chisel"        -> ivy"org.chipsalliance::chisel:6.7.0",
+  "chisel-plugin" -> ivy"org.chipsalliance:::chisel-plugin:6.7.0",
+  "chiseltest"    -> ivy"edu.berkeley.cs::chiseltest:6.0.0"
+)
+
+// 依赖项
+override def ivyDeps = super.ivyDeps() ++ Agg(chiselIvy.get)
+override def scalacPluginIvyDeps = super.scalacPluginIvyDeps() ++ Agg(chiselPluginIvy.get)
+
+// 编译选项
+override def scalacOptions = super.scalacOptions() ++
+  Agg("-language:reflectiveCalls", "-Ymacro-annotations", "-Ytasty-reader")
+
+// Firtool 解析
+def resolveFirtoolDeps = T {
+  firtoolresolver.Resolve(chisel3.BuildInfo.firtoolVersion.get, true) match {
+    case Right(bin) => bin.path.getAbsolutePath
+    case Left(err) => err
+  }
+}
+```
+
+### 5.2 Makefile 构建目标
+
+| 目标 | 说明 | 命令 |
+|------|------|------|
+| verilog | 生成 SystemVerilog | `make verilog CONFIG=KunminghuV2Config` |
+| sim-verilog | 生成仿真 Verilog | `make sim-verilog` |
+| emu | 编译 Verilator 仿真器 | `make emu` |
+| gsim | GSIM Difftest 仿真 | `make gsim` |
+| simv | 编译 VCS 仿真器 | `make simv` |
+| xsim | 编译 GalaxSim 仿真器 | `make xsim` |
+| pldm-build | Palladium 仿真构建 | `make pldm-build` |
+| comp | 编译检查 | `make comp` |
+| jar | 打包 JAR | `make jar` |
+| clean | 清理构建 | `make clean` |
+| init | 初始化子模块 | `make init` |
+| check-format | 代码格式检查 | `make check-format` |
+| reformat | 代码格式化 | `make reformat` |
+
+### 5.3 构建参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| CONFIG | DefaultConfig | 配置类名 |
+| NUM_CORES | 1 | 核心数量 |
+| ISSUE | E.b | CHI Issue 版本 |
+| CHISEL_TARGET | systemverilog | 目标语言 |
+| JVM_XMX | 40G | JVM 堆内存 |
+| JVM_XSS | 256m | JVM 栈内存 |
+
+---
+
+## 6. 单元测试
+
+### 6.1 测试组织结构
+
+```
+src/test/scala/
+├── top/
+│   ├── SimTop.scala           # 仿真顶层
+│   └── SimMMIO.scala          # MMIO 仿真
+├── xiangshan/
+│   ├── DecodeTest.scala       # 译码测试
+│   ├── XSTester.scala         # 顶层测试
+│   ├── backend/               # 后端测试
+│   └── frontend/              # 前端测试
+├── cache/
+│   └── WpuTest.scala          # Way Prediction 测试
+└── fu/
+    └── IntDiv.scala           # 整数除法测试
+```
+
+### 6.2 测试套件
+
+| 测试类型 | 说明 | 位置 |
+|----------|------|------|
+| ISA 测试 | RISC-V 指令集合规性 | `isa-tests/` (rv64mi, rv64si, rv64ua, rv64uf, rv64ud, rv64uv) |
+| 单元测试 | 模块功能测试 | `src/test/scala/` |
+| 压力测试 | 极端场景测试 | 分支密集、Cache 竞争、内存压力 |
+| 随机测试 | 随机指令流 | riscv-dv 生成 |
+| 系统测试 | 操作系统启动 | Linux, RT-Thread, FreeRTOS |
+
+### 6.3 测试执行
+
+```bash
+# 运行特定测试
+make test-DecodeUnit
+make verilog-decode
+
+# 运行所有测试
+make test
 ```
 
 ---
@@ -645,12 +659,14 @@ main/master       # 主分支，稳定版本
 
 ### 7.1 评审检查清单
 
-- [x] 各模块 RTL 代码完成
+- [x] 各模块 RTL 代码完成 (Chisel 6.7.0)
 - [x] 单元测试覆盖率 > 90%
-- [x] 代码评审通过
-- [x] CI/CD 流程正常运行
-- [x] 模块间接口对齐
-- [x] 性能建模完成
+- [x] 代码评审通过 (scalafmt, scalastyle)
+- [x] CI/CD 流程正常运行 (GitHub Actions emu.yml)
+- [x] 模块间接口对齐 (Bundle 定义一致)
+- [x] 性能建模完成 (分支预测、缓存、流水线)
+- [x] DFT 支持 (MBIST, SRAM_CTL 接口)
+- [x] 调试接口 (JTAG DTM, Trace)
 
 ### 7.2 评审结论
 
@@ -660,28 +676,42 @@ main/master       # 主分支，稳定版本
 
 ## 8. 附录
 
-### 8.1 Chisel 编码最佳实践
+### 8.1 Chisel 编码最佳实践清单
 
-| 实践 | 说明 |
-|------|------|
-| 使用 `val` 而非 `var` | 函数式编程风格 |
-| 避免使用 `when` 嵌套 | 提高可读性 |
-| 使用 `Module` 封装 | 模块化设计 |
-| 使用 `Bundle` 组织接口 | 接口清晰 |
-| 使用 `DontCare` 明确未连接 | 避免误警告 |
-| 使用 `assert` 进行运行时检查 | 捕获设计错误 |
+| 实践 | 说明 | 优先级 |
+|------|------|--------|
+| 使用 `val` 而非 `var` | 函数式编程风格 | 高 |
+| 避免 `when` 嵌套 | 提高可读性 | 高 |
+| 使用 `Module` 封装 | 模块化设计 | 高 |
+| 使用 `Bundle` 组织接口 | 接口清晰 | 高 |
+| 使用 `DontCare` | 明确未连接信号 | 中 |
+| 使用 `assert` | 运行时检查 | 中 |
+| 使用 `dataview` | Bundle 间转换 | 中 |
+| 添加模块文档 | 说明功能和参数 | 高 |
 
 ### 8.2 常见设计模式
 
-| 模式 | 用途 | 示例 |
-|------|------|------|
+| 模式 | 用途 | Chisel 实现 |
+|------|------|-------------|
 | Pipeline | 流水线 | `Pipe` module |
 | Arbiter | 仲裁 | `Arbiter` module |
-| Decoupled | 握手 | `Decoupled` interface |
+| Decoupled | 握手接口 | `Decoupled` interface |
 | Valid | 有效指示 | `Valid` interface |
 | RegEnable | 使能寄存器 | `RegEnable` |
+| ShiftRegister | 移位寄存器 | `ShiftRegister` |
+| Counter | 计数器 | `Counter` |
+
+### 8.3 参考文档
+
+| 文档 | 位置 | 说明 |
+|------|------|------|
+| Chisel 文档 | https://www.chisel-lang.org | Chisel 6.7.0 语言参考、API |
+| rocket-chip 文档 | https://github.com/chipsalliance/rocket-chip | Diplomacy, TileLink, AXI4 |
+| RISC-V 规范 | https://riscv.org | RV64GCBVMV, H-extension, Sv39/Sv48 |
+| 香山官方文档 | https://docs.xiangshan.cc | 三代架构演进、敏捷开发 |
 
 ---
 
-*文档版本：v1.0*
-*最后更新：2026-10-19*
+*文档版本：v1.1（深度优化版）*
+*最后更新：2026-10-20*
+*基于：本地 Chisel 代码分析、Chisel 6.7.0 文档、rocket-chip Diplomacy*
